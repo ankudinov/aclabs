@@ -21,7 +21,7 @@
         "storage": "128gb"
     },
     "onCreateCommand": "chmod +x /atd-atd-dual-dc/addAliases.sh; /atd-atd-dual-dc/addAliases.sh; ssh-keygen -N \"\" -f /home/avd/.ssh/id_rsa",
-    "postCreateCommand": "/bin/entrypoint",
+    // "postCreateCommand": "/bin/entrypoint",
     "workspaceMount": "source=${localWorkspaceFolder}/labs/${containerWorkspaceFolder},target=/${containerWorkspaceFolder},type=bind",
     "workspaceFolder": "/atd-atd-dual-dc",
     "containerUser": "avd"
