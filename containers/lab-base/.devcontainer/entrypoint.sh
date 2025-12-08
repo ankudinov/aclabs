@@ -140,14 +140,14 @@ fi
 code-server --bind-addr ${CODE_SERVER_BIND_ADDR} --auth password --disable-telemetry --disable-update-check --disable-workspace-trust "${CONTAINERWSF}" &
 
 # check if image is still missing and print a warning
-if [ -z "$(${CONTAINER_ENGINE} image ls | grep 'arista/ceos')" ]; then
-    echo "WARNING: cEOS-lab image download failed. Try to upload and import it manually."
-    echo "         Please make sure that image is imported with a correct name - arista/ceos:latest"
-    echo "         The lab will not auto start! Run 'make start' when image is ready."
-else
-    cd ${CONTAINERWSF}
-    make start
-fi
+# if [ -z "$(${CONTAINER_ENGINE} image ls | grep 'arista/ceos')" ]; then
+#     echo "WARNING: cEOS-lab image download failed. Try to upload and import it manually."
+#     echo "         Please make sure that image is imported with a correct name - arista/ceos:latest"
+#     echo "         The lab will not auto start! Run 'make start' when image is ready."
+# else
+#     cd ${CONTAINERWSF}
+#     make start
+# fi
 
 # on Codespaces this will not work correctly
 if ! ${CODESPACES:-false}; then
