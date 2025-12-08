@@ -29,7 +29,7 @@
         "storage": "64gb"
     },
     "onCreateCommand": "chmod +x /cvaas-cvaas-and-avd-demo--evpn-mlag/addAliases.sh; /cvaas-cvaas-and-avd-demo--evpn-mlag/addAliases.sh",
-    // "postCreateCommand": "/bin/entrypoint",
+    "postCreateCommand": "/bin/entrypoint",
     "workspaceMount": "source=${localWorkspaceFolder}/labs/${containerWorkspaceFolder},target=/${containerWorkspaceFolder},type=bind",
     "workspaceFolder": "/cvaas-cvaas-and-avd-demo--evpn-mlag",
     "containerUser": "avd"
