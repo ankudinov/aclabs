@@ -3,7 +3,9 @@
 set +e
 
 # use VSCode script to start Docker
-/usr/local/share/docker-init.sh
+if [ -z "$(command -v podman)" ] && [ -z "$(command -v docker)" ]; then
+    /usr/local/share/docker-init.sh
+fi
 
 # for D-in-D case container engine will be always Docker
 # however we do not want to hardcode it for future cases
@@ -113,31 +115,31 @@ else
     echo "CAFECAFE" > ${CONTAINERWSF}/clab/cv-onboarding-token
 fi
 
-if [ -f "${CONTAINERWSF}/postCreate.sh" ]; then
-    chmod +x ${CONTAINERWSF}/postCreate.sh
-    ${CONTAINERWSF}/postCreate.sh
-    # delete postCreate.sh after use to avoid confusing lab user
-    rm ${CONTAINERWSF}/postCreate.sh
-fi
+# if [ -f "${CONTAINERWSF}/postCreate.sh" ]; then
+#     chmod +x ${CONTAINERWSF}/postCreate.sh
+#     ${CONTAINERWSF}/postCreate.sh
+#     # delete postCreate.sh after use to avoid confusing lab user
+#     rm ${CONTAINERWSF}/postCreate.sh
+# fi
 
 # init demo dir as Git repo if requested for this demo env
-if ${GIT_INIT:-false}; then
-    cd ${CONTAINERWSF}
-    # if not a git repo already - init
-    if [ -z "$(git status 2>/dev/null)" ]; then
-        git init
-        git config --global --add safe.directory ${PWD}
-        if [ -z "$(git config user.name)" ]; then git config user.name "Lab User"; fi
-        if [ -z "$(git config user.email)" ]; then git config user.email user@one-click.lab; fi
-        git add .
-        git commit -m "git init"
-    fi
-fi
+# if ${GIT_INIT:-false}; then
+#     cd ${CONTAINERWSF}
+#     # if not a git repo already - init
+#     if [ -z "$(git status 2>/dev/null)" ]; then
+#         git init
+#         git config --global --add safe.directory ${PWD}
+#         if [ -z "$(git config user.name)" ]; then git config user.name "Lab User"; fi
+#         if [ -z "$(git config user.email)" ]; then git config user.email user@one-click.lab; fi
+#         git add .
+#         git commit -m "git init"
+#     fi
+# fi
 
-if [ -z "${CODE_SERVER_BIND_ADDR}" ]; then
-    CODE_SERVER_BIND_ADDR="0.0.0.0:8080"
-fi
-code-server --bind-addr ${CODE_SERVER_BIND_ADDR} --auth password --disable-telemetry --disable-update-check --disable-workspace-trust "${CONTAINERWSF}" &
+# if [ -z "${CODE_SERVER_BIND_ADDR}" ]; then
+#     CODE_SERVER_BIND_ADDR="0.0.0.0:8080"
+# fi
+# code-server --bind-addr ${CODE_SERVER_BIND_ADDR} --auth password --disable-telemetry --disable-update-check --disable-workspace-trust "${CONTAINERWSF}" &
 
 # check if image is still missing and print a warning
 # if [ -z "$(${CONTAINER_ENGINE} image ls | grep 'arista/ceos')" ]; then
