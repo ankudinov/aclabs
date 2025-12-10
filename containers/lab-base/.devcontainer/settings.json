@@ -1,3 +1,8 @@
 {
-    "workbench.startupEditor": "readme"
+    "workbench.startupEditor": "readme",
+    "chat.commandCenter.enabled": false,
+    "chat.agentSessionsViewLocation": "disabled",
+    "chat.agent.enabled": false,
+    "chat.disableAIFeatures": true,
+    "terminal.integrated.suggest.enabled": true
 }
