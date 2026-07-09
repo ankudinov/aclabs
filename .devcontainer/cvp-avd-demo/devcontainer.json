@@ -1,0 +1,37 @@
+{
+    "image": "ghcr.io/${localEnv:GITHUB_REPOSITORY}/lab-base:python3.12-avd-v6.1.0-clab0.74.3-rev2.6.6",
+    // containerEnv set the variables applied to entire container
+    "containerEnv": {
+        "ARISTA_TOKEN": "${localEnv:ARTOKEN}",
+        "CEOS_LAB_VERSION": "4.36.1F",
+        "CV_API_TOKEN": "${localEnv:CV_API_TOKEN}",
+        "CONTAINERWSF": "${containerWorkspaceFolder}",
+        "GITHUB_REPOSITORY": "${localEnv:GITHUB_REPOSITORY}",
+        "PASSWORD": "${localEnv:CODER_PASSWORD}"
+    },
+    "secrets": {
+        "CV_API_TOKEN": {
+            "description": "CVaaS service account token."
+            // "documentationUrl": "https://example.com/link/to/info"
+        },
+        "CVURL": {
+            "description": "(Optional) URL to be used to access CVaaS. Default is `www.cv-staging.corp.arista.io`"
+            // "documentationUrl": "https://example.com/link/to/info"
+        },
+        "ARTOKEN": {
+            "description": "token to auto-download EOS images from arista.com."
+            // "documentationUrl": "https://example.com/link/to/info"
+        }
+    },
+    "hostRequirements": {
+        "cpus": 16,
+        "memory": "64gb",
+        "storage": "64gb"
+    },
+    "onCreateCommand": "chmod +x /cvp-avd-demo/addAliases.sh; /cvp-avd-demo/addAliases.sh",
+    "postCreateCommand": "/bin/entrypoint",
+    "workspaceMount": "source=${localWorkspaceFolder}/labs/${containerWorkspaceFolder},target=/${containerWorkspaceFolder},type=bind",
+    "workspaceFolder": "/cvp-avd-demo",
+    "containerUser": "avd",
+    "runArgs": ["--env-file","${localWorkspaceFolder}/labs/${containerWorkspaceFolder}/.vscode/lab_vars.public.env"]
+}
