@@ -50,11 +50,12 @@ ansible_httpapi_validate_certs: false
 ansible_python_interpreter: $(which python3)
 
 cv_settings:
-  cvaas:
-    enabled: true
-    clusters:
-      - name: cvaas
-        region: staging
-        token_file: "/mnt/flash/cv-onboarding-token"
+  onprem_clusters:
+    - name: cvp
+      servers:
+        - name: "{{ lookup('ansible.builtin.env', 'CVURL') }}"
+          port: 9910
+      vrf: MGMT
+      token_file: "/mnt/flash/cv-onboarding-token"
   terminattr:
     disable_aaa: true
