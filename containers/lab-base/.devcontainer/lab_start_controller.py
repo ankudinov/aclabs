@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+"""Run lab initialization asynchronously and publish progress for VS Code."""
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import fcntl
+import ipaddress
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+from typing import Any
+
+import paramiko
+import yaml
+
+
+STATE_DIR = Path("/tmp/aclabs-lab-start")
+STATE_PATH = STATE_DIR / "state.json"
+LOCK_PATH = STATE_DIR / "startup.lock"
+CVP_ONBOARD_TIMEOUT_SECONDS = 1380
+LAB_START_TIMEOUT_SECONDS = 600
+DEVICE_READY_TIMEOUT_SECONDS = 300
+DEVICE_POLL_INTERVAL_SECONDS = 5
+DEVICE_USERNAME = os.environ.get("LABUSERNAME") or "arista"
+DEVICE_PASSWORD = os.environ.get("LABPASSPHRASE") or "arista"
+
+
+class LabStartError(RuntimeError):
+    """Raised when automatic lab startup cannot be completed."""
+
+
+def environment_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def cloudvision_onboarding_enabled() -> bool:
+    try:
+        return ipaddress.ip_address(os.environ.get("CVURL", "")).version == 4
+    except ValueError:
+        return False
+
+
+def write_state(status: str, message: str) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary_path = STATE_PATH.with_suffix(".tmp")
+    data = {
+        "status": status,
+        "message": message,
+        "updated_at": time.time(),
+    }
+    temporary_path.write_text(json.dumps(data), encoding="utf-8")
+    temporary_path.replace(STATE_PATH)
+    print(message, flush=True)
+
+
+def existing_status() -> str:
+    try:
+        data: Any = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return data.get("status", "") if isinstance(data, dict) else ""
+
+
+def run_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: int,
+    error_message: str,
+) -> None:
+    try:
+        subprocess.run(command, cwd=cwd, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise LabStartError(
+            f"{error_message} Timed out after {timeout} seconds."
+        ) from error
+    except subprocess.CalledProcessError as error:
+        raise LabStartError(
+            f"{error_message} Command exited with status {error.returncode}."
+        ) from error
+
+
+def container_engine() -> str:
+    for command in ("podman", "docker"):
+        if shutil.which(command):
+            return command
+    raise LabStartError("Failed to find docker or podman.")
+
+
+def verify_ceos_image(workspace: Path) -> None:
+    engine = container_engine()
+    result = subprocess.run(
+        [engine, "image", "inspect", "arista/ceos:latest"],
+        cwd=workspace,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise LabStartError(
+            "The arista/ceos:latest image is unavailable. "
+            "Import the image and run lab_start_controller.py --force."
+        )
+
+
+def onboard_cloudvision(workspace: Path) -> None:
+    if not cloudvision_onboarding_enabled():
+        return
+
+    write_state(
+        "ONBOARDING",
+        "Waiting for on-prem CloudVision and preparing onboarding data...",
+    )
+    run_command(
+        ["/bin/cv_onboard.py"],
+        cwd=workspace,
+        timeout=CVP_ONBOARD_TIMEOUT_SECONDS,
+        error_message="CloudVision onboarding failed.",
+    )
+
+
+def commit_onboarding_changes(workspace: Path) -> None:
+    if not cloudvision_onboarding_enabled() or not environment_flag("GIT_INIT"):
+        return
+
+    repository = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=workspace,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if repository.returncode != 0:
+        return
+
+    subprocess.run(
+        ["git", "add", "-u", "--", "clab/init-configs"],
+        cwd=workspace,
+        check=True,
+    )
+    changes = subprocess.run(
+        ["git", "diff", "--cached", "--quiet", "--", "clab/init-configs"],
+        cwd=workspace,
+        check=False,
+    )
+    if changes.returncode == 0:
+        return
+    if changes.returncode != 1:
+        raise LabStartError("Failed to inspect generated onboarding changes.")
+
+    run_command(
+        ["git", "commit", "-m", "Configure lab for on-prem CloudVision"],
+        cwd=workspace,
+        timeout=60,
+        error_message="Failed to commit generated onboarding changes.",
+    )
+
+
+def topology_nodes(workspace: Path) -> list[str]:
+    topology_path = workspace / "clab" / "topology.clab.yml"
+    try:
+        with open(topology_path, "r", encoding="utf-8") as topology_file:
+            topology: Any = yaml.safe_load(topology_file)
+        nodes = topology["topology"]["nodes"]
+    except (OSError, TypeError, KeyError, yaml.YAMLError) as error:
+        raise LabStartError(
+            f"Failed to load lab nodes from {topology_path}."
+        ) from error
+
+    if not isinstance(nodes, dict) or not nodes:
+        raise LabStartError(f"No lab nodes were found in {topology_path}.")
+    return list(nodes)
+
+
+def node_is_ready(node: str, username: str, password: str) -> bool:
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            hostname=node,
+            username=username,
+            password=password,
+            timeout=3,
+            banner_timeout=3,
+            auth_timeout=3,
+            look_for_keys=False,
+            allow_agent=False,
+        )
+        _, stdout, _ = client.exec_command("pwd", timeout=3)
+        return "/" in stdout.read().decode(errors="replace")
+    except Exception:
+        return False
+    finally:
+        client.close()
+
+
+def wait_for_nodes(workspace: Path) -> None:
+    nodes = topology_nodes(workspace)
+    deadline = time.monotonic() + DEVICE_READY_TIMEOUT_SECONDS
+    unavailable = nodes
+
+    write_state("VERIFYING", "Lab deployed; waiting for devices to accept SSH...")
+    with ThreadPoolExecutor(max_workers=min(len(nodes), 10)) as executor:
+        while time.monotonic() < deadline:
+            futures = {
+                executor.submit(
+                    node_is_ready,
+                    node,
+                    DEVICE_USERNAME,
+                    DEVICE_PASSWORD,
+                ): node
+                for node in unavailable
+            }
+            unavailable = [
+                futures[future]
+                for future in as_completed(futures)
+                if not future.result()
+            ]
+            if not unavailable:
+                return
+            print(
+                "Waiting for devices: " + ", ".join(sorted(unavailable)),
+                flush=True,
+            )
+            time.sleep(DEVICE_POLL_INTERVAL_SECONDS)
+
+    raise LabStartError(
+        "Devices did not become ready within "
+        f"{DEVICE_READY_TIMEOUT_SECONDS} seconds: "
+        + ", ".join(sorted(unavailable))
+    )
+
+
+def start_lab(workspace: Path) -> None:
+    write_state("DEPLOYING", "Startup prerequisites are ready; starting the lab...")
+    run_command(
+        ["make", "start"],
+        cwd=workspace,
+        timeout=LAB_START_TIMEOUT_SECONDS,
+        error_message="Lab deployment failed.",
+    )
+
+
+def main() -> int:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_PATH, "w", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Lab startup is already running.", flush=True)
+            return 0
+
+        if existing_status() == "READY" and "--force" not in sys.argv[1:]:
+            print("Lab is already ready.", flush=True)
+            return 0
+
+        try:
+            workspace_value = os.environ.get("CONTAINERWSF", "")
+            if not workspace_value:
+                raise LabStartError("CONTAINERWSF is not set.")
+            workspace = Path(workspace_value)
+            if not workspace.is_dir():
+                raise LabStartError(f"Workspace does not exist: {workspace}")
+
+            write_state("STARTING", "Automatic lab startup has begun.")
+            verify_ceos_image(workspace)
+            onboard_cloudvision(workspace)
+            commit_onboarding_changes(workspace)
+            start_lab(workspace)
+            wait_for_nodes(workspace)
+            write_state("READY", "Lab is ready!")
+            return 0
+        except (LabStartError, OSError, subprocess.SubprocessError) as error:
+            write_state("FAILED", f"ERROR: {error}")
+            return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

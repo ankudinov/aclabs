@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Onboard the lab to running on-prem CloudVision instance"""
+"""Onboard a lab to a running on-prem CloudVision instance."""
 
 import os
 import re
@@ -24,15 +24,15 @@ class Settings:
     username: str
     password: str
     workspace: Path
-    login_timeout: int = 600
+    login_timeout: int = 1200
     service_account: str = "labs-dot-arista"
 
     @classmethod
     def from_environment(cls) -> "Settings":
         values = {
             "CVURL": os.environ.get("CVURL", ""),
-            "LABUSERNAME": os.environ.get("LABUSERNAME", ""),
-            "LABPASSPHRASE": os.environ.get("LABPASSPHRASE", ""),
+            "LABUSERNAME": os.environ.get("LABUSERNAME") or "arista",
+            "LABPASSPHRASE": os.environ.get("LABPASSPHRASE") or "arista",
             "CONTAINERWSF": os.environ.get("CONTAINERWSF", ""),
         }
         missing = [name for name, value in values.items() if not value]
@@ -52,23 +52,11 @@ class Settings:
                 "CVURL must be the IPv4 address of an on-prem CVP instance."
             )
 
-        try:
-            login_timeout = int(os.environ.get("CVP_LOGIN_TIMEOUT_SECONDS", "600"))
-        except ValueError as error:
-            raise OnboardingError(
-                "CVP_LOGIN_TIMEOUT_SECONDS must be an integer."
-            ) from error
-        if login_timeout <= 0:
-            raise OnboardingError(
-                "CVP_LOGIN_TIMEOUT_SECONDS must be greater than zero."
-            )
-
         return cls(
             cv_url=str(address),
             username=values["LABUSERNAME"],
             password=values["LABPASSPHRASE"],
             workspace=Path(values["CONTAINERWSF"]),
-            login_timeout=login_timeout
         )
 
 class CloudVisionOnboarder:
@@ -303,10 +291,11 @@ class CloudVisionOnboarder:
                 f"Failed to configure {zshrc_path} to load {runtime_path}."
             ) from error
 
-    def configure_terminattr(self) -> None:
+    def update_startup_configs(self) -> None:
 
         print(
-            f"Updating lab startup configs to stream to {self.base_url} ...",
+            "Updating lab startup configs for CloudVision and relayed "
+            "lab credentials...",
             file=sys.stderr,
         )
 
@@ -321,7 +310,18 @@ class CloudVisionOnboarder:
             r"^.*\bTerminAttr\b.*-cvaddr=\S+.*$",
             re.MULTILINE,
         )
-        updated_files = 0
+        credential_line = re.compile(
+            rf"^username\s+{re.escape(self.settings.username)}(?:\s+.*)?$",
+            re.MULTILINE,
+        )
+        any_credential_line = re.compile(r"^username\s+.*$", re.MULTILINE)
+        no_aaa_root_line = re.compile(r"^no aaa root\s*$", re.MULTILINE)
+        desired_credential_line = (
+            "username "
+            f"{self.settings.username} privilege 15 role network-admin "
+            f"secret {self.settings.password}"
+        )
+        terminattr_files = 0
 
         def update_line(match: re.Match[str]) -> str:
             line = re.sub(
@@ -345,20 +345,47 @@ class CloudVisionOnboarder:
                     f"Failed to read bootstrap configuration {config_path}."
                 ) from error
 
-            config, replacements = terminattr_line.subn(update_line, config)
-            if replacements == 0:
-                continue
+            config, terminattr_replacements = terminattr_line.subn(
+                update_line,
+                config,
+            )
+            config, credential_replacements = credential_line.subn(
+                lambda _: desired_credential_line,
+                config,
+                count=1,
+            )
+            if credential_replacements == 0:
+                existing_credential = any_credential_line.search(config)
+                if existing_credential:
+                    position = existing_credential.start()
+                    config = (
+                        config[:position]
+                        + f"{desired_credential_line}\n"
+                        + config[position:]
+                    )
+                else:
+                    no_aaa_root = no_aaa_root_line.search(config)
+                    if no_aaa_root:
+                        position = no_aaa_root.end()
+                        config = (
+                            config[:position]
+                            + f"\n!\n{desired_credential_line}"
+                            + config[position:]
+                        )
+                    else:
+                        config = f"{desired_credential_line}\n{config}"
 
             try:
                 with open(config_path, "w", encoding="utf-8") as config_file:
                     config_file.write(config)
             except OSError as error:
                 raise OnboardingError(
-                    f"Failed to update {config_path} to stream to on-prem CVP."
+                    f"Failed to update bootstrap configuration {config_path}."
                 ) from error
-            updated_files += 1
+            if terminattr_replacements:
+                terminattr_files += 1
 
-        if updated_files == 0:
+        if terminattr_files == 0:
             raise OnboardingError(
                 f"No TerminAttr configuration with -cvaddr was found in {config_dir}."
             )
@@ -368,7 +395,7 @@ class CloudVisionOnboarder:
         api_token = self.create_api_token()
         onboarding_token = self.create_onboarding_token()
         self.write_onboarding_token(onboarding_token)
-        self.configure_terminattr()
+        self.update_startup_configs()
         self.write_runtime_environment(api_token)
         print(
             "CloudVision onboarding data is ready; cEOS-lab will stream to "

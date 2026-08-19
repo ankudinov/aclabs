@@ -27,7 +27,7 @@ ntp_settings:
 aaa_settings:
   # Local Users
   local_users:
-    - name: arista
+    - name: "{{ lookup('ansible.builtin.env', 'LABUSERNAME', default='arista') }}"
       privilege: 15
       role: network-admin
       sha512_password: "{{ ansible_password | password_hash(rounds=5000, salt=1) }}"
@@ -36,8 +36,8 @@ aaa_settings:
     exec:
       default: local
 
-ansible_user: arista
-ansible_password: arista
+ansible_user: "{{ lookup('ansible.builtin.env', 'LABUSERNAME', default='arista') }}"
+ansible_password: "{{ lookup('ansible.builtin.env', 'LABPASSPHRASE', default='arista') }}"
 ansible_network_os: arista.eos.eos
 # Configure privilege escalation
 ansible_become: true

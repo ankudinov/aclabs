@@ -103,4 +103,6 @@ jobs:
       # - Add AVD 6.1.0 lab-base variant
       # 2.6.7
       # - ContainerLab 0.75.0
-      container_revision: "2.6.7"
+      # 2.6.8
+      # - asynchronous lab startup and on-prem CloudVision onboarding
+      container_revision: "2.6.8"
