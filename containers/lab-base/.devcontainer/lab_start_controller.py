@@ -73,9 +73,17 @@ def run_command(
     cwd: Path,
     timeout: int,
     error_message: str,
+    suppress_output: bool = False,
 ) -> None:
     try:
-        subprocess.run(command, cwd=cwd, check=True, timeout=timeout)
+        subprocess.run(
+            command,
+            cwd=cwd,
+            check=True,
+            timeout=timeout,
+            stdout=subprocess.DEVNULL if suppress_output else None,
+            stderr=subprocess.DEVNULL if suppress_output else None,
+        )
     except subprocess.TimeoutExpired as error:
         raise LabStartError(
             f"{error_message} Timed out after {timeout} seconds."
@@ -244,6 +252,8 @@ def start_lab(workspace: Path) -> None:
         cwd=workspace,
         timeout=LAB_START_TIMEOUT_SECONDS,
         error_message="Lab deployment failed.",
+        # we don't want to see the noise from cLab start under normal conditions
+        suppress_output=True,
     )
 
 
