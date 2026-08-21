@@ -12,6 +12,10 @@ Last reviewed: 18/08/2026
 
 This lab intentionally ships without separate docs or slide content.
 
+# How To Access CVP
+
+To access CloudVision UI click [this link]({{aclabs.cvp_url}})
+
 ## Lab Inventory
 
 This lab has following devices:

@@ -20,6 +20,7 @@ import yaml
 STATE_DIR = Path("/tmp/aclabs-lab-start")
 STATE_PATH = STATE_DIR / "state.json"
 LOCK_PATH = STATE_DIR / "startup.lock"
+CVP_URL_PLACEHOLDER = "{{aclabs.cvp_url}}"
 CVP_ONBOARD_TIMEOUT_SECONDS = 1380
 LAB_START_TIMEOUT_SECONDS = 600
 DEVICE_READY_TIMEOUT_SECONDS = 300
@@ -44,6 +45,26 @@ def cloudvision_onboarding_enabled() -> bool:
         return ipaddress.ip_address(os.environ.get("CVURL", "")).version == 4
     except ValueError:
         return False
+
+
+def update_readme_with_cvp_url(workspace: Path) -> None:
+    coder_url = os.environ.get("CODER_URL", "").strip().rstrip("/")
+    if not coder_url:
+        return
+
+    cvp_url = coder_url.replace("coder", "cvp", 1)
+    if "://" not in cvp_url:
+        cvp_url = f"https://{cvp_url}"
+
+    readme_path = workspace / "README.md"
+    try:
+        readme = readme_path.read_text(encoding="utf-8")
+        readme_path.write_text(
+            readme.replace(CVP_URL_PLACEHOLDER, cvp_url),
+            encoding="utf-8",
+        )
+    except OSError as error:
+        raise LabStartError(f"Failed to update {readme_path}.") from error
 
 
 def write_state(status: str, message: str) -> None:
@@ -121,6 +142,7 @@ def onboard_cloudvision(workspace: Path) -> None:
     if not cloudvision_onboarding_enabled():
         return
 
+    update_readme_with_cvp_url(workspace)
     write_state(
         "ONBOARDING",
         "Waiting for on-prem CloudVision and preparing onboarding data...",
