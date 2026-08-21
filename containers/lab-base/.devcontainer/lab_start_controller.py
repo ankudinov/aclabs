@@ -2,6 +2,8 @@
 """Run lab initialization asynchronously and publish progress for VS Code."""
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Empty, Queue
+from threading import Thread
 import fcntl
 import ipaddress
 import json
@@ -21,6 +23,8 @@ STATE_DIR = Path("/tmp/aclabs-lab-start")
 STATE_PATH = STATE_DIR / "state.json"
 LOCK_PATH = STATE_DIR / "startup.lock"
 CVP_URL_PLACEHOLDER = "{{aclabs.cvp_url}}"
+CVP_WAITING_LINE_PREFIX = "Waiting for the CloudVision API at "
+CVP_LOGIN_SUCCEEDED = "CloudVision login succeeded."
 CVP_ONBOARD_TIMEOUT_SECONDS = 1380
 LAB_START_TIMEOUT_SECONDS = 600
 DEVICE_READY_TIMEOUT_SECONDS = 300
@@ -67,7 +71,12 @@ def update_readme_with_cvp_url(workspace: Path) -> None:
         raise LabStartError(f"Failed to update {readme_path}.") from error
 
 
-def write_state(status: str, message: str) -> None:
+def write_state(
+    status: str,
+    message: str,
+    *,
+    log_message: bool = True,
+) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     temporary_path = STATE_PATH.with_suffix(".tmp")
     data = {
@@ -77,7 +86,8 @@ def write_state(status: str, message: str) -> None:
     }
     temporary_path.write_text(json.dumps(data), encoding="utf-8")
     temporary_path.replace(STATE_PATH)
-    print(message, flush=True)
+    if log_message:
+        print(message, flush=True)
 
 
 def existing_status() -> str:
@@ -115,6 +125,85 @@ def run_command(
         ) from error
 
 
+def run_cloudvision_onboarding(workspace: Path) -> None:
+    process = subprocess.Popen(
+        ["/bin/cv_onboard.py"],
+        cwd=workspace,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    if process.stdout is None:
+        process.kill()
+        raise LabStartError("Failed to capture CloudVision onboarding output.")
+
+    output_queue: Queue[str | None] = Queue()
+
+    def read_output() -> None:
+        try:
+            for line in process.stdout:
+                output_queue.put(line)
+        finally:
+            output_queue.put(None)
+
+    Thread(target=read_output, daemon=True).start()
+    deadline = time.monotonic() + CVP_ONBOARD_TIMEOUT_SECONDS
+    login_reported = False
+
+    try:
+        output_open = True
+        while output_open:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(
+                    process.args,
+                    CVP_ONBOARD_TIMEOUT_SECONDS,
+                )
+            try:
+                line = output_queue.get(timeout=min(0.5, remaining))
+            except Empty:
+                continue
+            if line is None:
+                output_open = False
+                continue
+
+            message = line.strip()
+            if message.startswith(CVP_WAITING_LINE_PREFIX):
+                continue
+            if message == CVP_LOGIN_SUCCEEDED:
+                write_state(
+                    "ONBOARDING",
+                    "CloudVision API responded; preparing onboarding data...",
+                    log_message=False,
+                )
+                login_reported = True
+            print(line, end="", flush=True)
+
+        return_code = process.wait(
+            timeout=max(0.1, deadline - time.monotonic())
+        )
+    except subprocess.TimeoutExpired as error:
+        process.kill()
+        process.wait()
+        raise LabStartError(
+            "CloudVision onboarding failed. "
+            f"Timed out after {CVP_ONBOARD_TIMEOUT_SECONDS} seconds."
+        ) from error
+
+    if return_code != 0:
+        raise LabStartError(
+            "CloudVision onboarding failed. "
+            f"Command exited with status {return_code}."
+        )
+    if not login_reported:
+        write_state(
+            "ONBOARDING",
+            "CloudVision API responded; preparing onboarding data...",
+            log_message=False,
+        )
+
+
 def container_engine() -> str:
     for command in ("podman", "docker"):
         if shutil.which(command):
@@ -143,16 +232,14 @@ def onboard_cloudvision(workspace: Path) -> None:
         return
 
     update_readme_with_cvp_url(workspace)
+    cv_address = os.environ.get("CVURL", "")
+    base_url = f"https://{cv_address}"
     write_state(
-        "ONBOARDING",
-        "Waiting for on-prem CloudVision and preparing onboarding data...",
+        "CVP_WAITING",
+        f"Waiting for the CloudVision API at {base_url} ...",
+        log_message=False,
     )
-    run_command(
-        ["/bin/cv_onboard.py"],
-        cwd=workspace,
-        timeout=CVP_ONBOARD_TIMEOUT_SECONDS,
-        error_message="CloudVision onboarding failed.",
-    )
+    run_cloudvision_onboarding(workspace)
 
 
 def commit_onboarding_changes(workspace: Path) -> None:

@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 from rich.theme import Theme
@@ -19,6 +20,8 @@ STATE_PATH = STATE_DIR / "state.json"
 LOG_PATH = STATE_DIR / "startup.log"
 TERMINAL_STATES = {"READY", "FAILED"}
 WAIT_TIMEOUT_SECONDS = 2400
+CVP_EXPECTED_WAIT_SECONDS = 600
+UI_REFRESH_INTERVAL_SECONDS = 0.25
 
 custom_theme = Theme(
     {"info": "bold cyan", "warning": "magenta", "critical": "bold red"}
@@ -72,35 +75,188 @@ def print_new_log(offset: int) -> int:
     return new_offset
 
 
+DIGIT_SEGMENTS = {
+    "0": "abcdef",
+    "1": "bc",
+    "2": "abdeg",
+    "3": "abcdg",
+    "4": "bcfg",
+    "5": "acdfg",
+    "6": "acdefg",
+    "7": "abc",
+    "8": "abcdefg",
+    "9": "abcdfg",
+}
+
+
+def large_ascii_time(value: str, show_colon: bool) -> list[str]:
+    rows = [""] * 7
+    for character in value:
+        if character == ":":
+            glyph = (
+                "   ",
+                " # " if show_colon else "   ",
+                " # " if show_colon else "   ",
+                "   ",
+                " # " if show_colon else "   ",
+                " # " if show_colon else "   ",
+                "   ",
+            )
+        else:
+            segments = DIGIT_SEGMENTS[character]
+            glyph = (
+                " ##### " if "a" in segments else "       ",
+                f"{'##' if 'f' in segments else '  '}   "
+                f"{'##' if 'b' in segments else '  '}",
+                f"{'##' if 'f' in segments else '  '}   "
+                f"{'##' if 'b' in segments else '  '}",
+                " ##### " if "g" in segments else "       ",
+                f"{'##' if 'e' in segments else '  '}   "
+                f"{'##' if 'c' in segments else '  '}",
+                f"{'##' if 'e' in segments else '  '}   "
+                f"{'##' if 'c' in segments else '  '}",
+                " ##### " if "d" in segments else "       ",
+            )
+        for index, line in enumerate(glyph):
+            rows[index] += line + "  "
+    return [row.rstrip() for row in rows]
+
+
+def render_watches(countdown: int, frame: int) -> Panel:
+    minutes, seconds = divmod(countdown, 60)
+    digits = large_ascii_time(
+        f"{minutes:02d}:{seconds:02d}",
+        show_colon=frame == 0,
+    )
+    face_width = max(len(line) for line in digits)
+    strap = ("|=" if frame == 0 else "=|") * 10
+    lines = [
+        f"{' ' * 12}{strap}",
+        f"      .{'-' * (face_width + 4)}.",
+        f"======|{' ' * (face_width + 4)}|======",
+    ]
+    lines.extend(f"      |  {line:<{face_width}}  |" for line in digits)
+    lines.extend(
+        (
+            f"======|{' ' * (face_width + 4)}|======",
+            f"      '{'-' * (face_width + 4)}'",
+            f"{' ' * 12}{strap}",
+        )
+    )
+    content = Text("\n".join(lines), style="bold green")
+    content.append(
+        "\n\nTime left to sacrifice to the CVP API startup demons. ⏳",
+        style="yellow",
+    )
+    return Panel(
+        content,
+        border_style="green",
+        expand=False,
+    )
+
+
+def cvp_wait_animation(started_at: float) -> Panel:
+    elapsed = max(0.0, time.time() - started_at)
+    remaining = max(0, CVP_EXPECTED_WAIT_SECONDS - int(elapsed))
+    frame = int(elapsed * 2) % 2
+    if remaining > 0:
+        return render_watches(remaining, frame)
+
+    worried_poses = (
+        (
+            "    -- O --  ?!  .----------.\n"
+            "       |         |  00:00   |\n"
+            "      / >        '----------'"
+        ),
+        (
+            "       O__  !!!  .----------.\n"
+            "      <|         |  00:00   |\n"
+            "      / >        '----------'"
+        ),
+    )
+    animation = Text(worried_poses[frame], style="bold magenta")
+    animation.append(
+        "\n\nThis is taking longer than expected. "
+        "Still waiting until the maximum startup timeout.",
+        style="bold yellow",
+    )
+    return Panel(
+        animation,
+        title="CloudVision is fashionably late",
+        border_style="magenta",
+        expand=False,
+    )
+
+
 def main() -> int:
     show_banner()
     deadline = time.monotonic() + WAIT_TIMEOUT_SECONDS
     offset = 0
+    wait_live: Live | None = None
+    wait_started_at: float | None = None
 
-    while time.monotonic() < deadline:
-        offset = print_new_log(offset)
-        state = read_state()
-        status = state.get("status")
-        if status in TERMINAL_STATES:
-            message = str(state.get("message", status))
-            if status == "READY":
-                console.log(message, style="info")
-                try:
-                    on_prem_cvp = (
-                        ipaddress.ip_address(os.environ.get("CVURL", "")).version
-                        == 4
-                    )
-                except ValueError:
-                    on_prem_cvp = False
-                if on_prem_cvp:
+    try:
+        while time.monotonic() < deadline:
+            offset = print_new_log(offset)
+            state = read_state()
+            status = state.get("status")
+
+            if status == "CVP_WAITING":
+                if wait_live is None:
+                    try:
+                        wait_started_at = float(
+                            state.get("updated_at", time.time())
+                        )
+                    except (TypeError, ValueError):
+                        wait_started_at = time.time()
+                    console.print(str(state.get("message", "Waiting for CVP...")))
                     console.print(
-                        "Open a new terminal to load generated runtime variables.",
+                        "Warning: CloudVision can take up to 10 minutes "
+                        "to become available.",
                         style="warning",
                     )
-                return 0
-            console.log(message, style="critical")
-            return 1
-        time.sleep(1)
+                    wait_live = Live(
+                        cvp_wait_animation(wait_started_at),
+                        console=console,
+                        transient=True,
+                        auto_refresh=False,
+                    )
+                    wait_live.start(refresh=True)
+                elif wait_started_at is not None:
+                    wait_live.update(
+                        cvp_wait_animation(wait_started_at),
+                        refresh=True,
+                    )
+            elif wait_live is not None:
+                wait_live.stop()
+                wait_live = None
+                wait_started_at = None
+
+            if status in TERMINAL_STATES:
+                message = str(state.get("message", status))
+                if status == "READY":
+                    console.log(message, style="info")
+                    try:
+                        on_prem_cvp = (
+                            ipaddress.ip_address(
+                                os.environ.get("CVURL", "")
+                            ).version
+                            == 4
+                        )
+                    except ValueError:
+                        on_prem_cvp = False
+                    if on_prem_cvp:
+                        console.print(
+                            "Open a new terminal to load generated runtime variables.",
+                            style="warning",
+                        )
+                    return 0
+                console.log(message, style="critical")
+                return 1
+            time.sleep(UI_REFRESH_INTERVAL_SECONDS)
+    finally:
+        if wait_live is not None:
+            wait_live.stop()
 
     console.log(
         f"Timed out waiting {WAIT_TIMEOUT_SECONDS} seconds "
