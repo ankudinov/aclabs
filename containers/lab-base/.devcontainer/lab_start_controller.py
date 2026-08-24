@@ -257,12 +257,12 @@ def commit_onboarding_changes(workspace: Path) -> None:
         return
 
     subprocess.run(
-        ["git", "add", "-u", "--", "clab/init-configs"],
+        ["git", "add", "-u", "--", "clab/init-configs", "README.md"],
         cwd=workspace,
         check=True,
     )
     changes = subprocess.run(
-        ["git", "diff", "--cached", "--quiet", "--", "clab/init-configs"],
+        ["git", "diff", "--cached", "--quiet", "--", "clab/init-configs", "README.md"],
         cwd=workspace,
         check=False,
     )
