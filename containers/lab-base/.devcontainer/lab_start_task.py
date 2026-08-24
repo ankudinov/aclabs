@@ -75,51 +75,120 @@ def print_new_log(offset: int) -> int:
     return new_offset
 
 
-DIGIT_SEGMENTS = {
-    "0": "abcdef",
-    "1": "bc",
-    "2": "abdeg",
-    "3": "abcdg",
-    "4": "bcfg",
-    "5": "acdfg",
-    "6": "acdefg",
-    "7": "abc",
-    "8": "abcdefg",
-    "9": "abcdfg",
+ASCII_GLYPHS = {
+    "0": (
+        " ##### ",
+        "##   ##",
+        "##   ##",
+        "       ",
+        "##   ##",
+        "##   ##",
+        " ##### ",
+    ),
+    "1": (
+        "  ###  ",
+        " ####  ",
+        "## ##  ",
+        "   ##  ",
+        "   ##  ",
+        "   ##  ",
+        "#######",
+    ),
+    "2": (
+        " ##### ",
+        "     ##",
+        "     ##",
+        " ##### ",
+        "##     ",
+        "##     ",
+        " ##### ",
+    ),
+    "3": (
+        " ##### ",
+        "     ##",
+        "     ##",
+        " ##### ",
+        "     ##",
+        "     ##",
+        " ##### ",
+    ),
+    "4": (
+        "       ",
+        "##   ##",
+        "##   ##",
+        " ##### ",
+        "     ##",
+        "     ##",
+        "       ",
+    ),
+    "5": (
+        " ##### ",
+        "##     ",
+        "##     ",
+        " ##### ",
+        "     ##",
+        "     ##",
+        " ##### ",
+    ),
+    "6": (
+        " ##### ",
+        "##     ",
+        "##     ",
+        " ##### ",
+        "##   ##",
+        "##   ##",
+        " ##### ",
+    ),
+    "7": (
+        " ##### ",
+        "     ##",
+        "     ##",
+        "       ",
+        "     ##",
+        "     ##",
+        "       ",
+    ),
+    "8": (
+        " ##### ",
+        "##   ##",
+        "##   ##",
+        " ##### ",
+        "##   ##",
+        "##   ##",
+        " ##### ",
+    ),
+    "9": (
+        " ##### ",
+        "##   ##",
+        "##   ##",
+        " ##### ",
+        "     ##",
+        "     ##",
+        " ##### ",
+    ),
+    ":": (
+        "   ",
+        " # ",
+        " # ",
+        "   ",
+        " # ",
+        " # ",
+        "   ",
+    ),
 }
+BLANK_COLON_GLYPH = ("   ",) * 7
 
 
 def large_ascii_time(value: str, show_colon: bool) -> list[str]:
     rows = [""] * 7
     for character in value:
-        if character == ":":
-            glyph = (
-                "   ",
-                " # " if show_colon else "   ",
-                " # " if show_colon else "   ",
-                "   ",
-                " # " if show_colon else "   ",
-                " # " if show_colon else "   ",
-                "   ",
-            )
-        else:
-            segments = DIGIT_SEGMENTS[character]
-            glyph = (
-                " ##### " if "a" in segments else "       ",
-                f"{'##' if 'f' in segments else '  '}   "
-                f"{'##' if 'b' in segments else '  '}",
-                f"{'##' if 'f' in segments else '  '}   "
-                f"{'##' if 'b' in segments else '  '}",
-                " ##### " if "g" in segments else "       ",
-                f"{'##' if 'e' in segments else '  '}   "
-                f"{'##' if 'c' in segments else '  '}",
-                f"{'##' if 'e' in segments else '  '}   "
-                f"{'##' if 'c' in segments else '  '}",
-                " ##### " if "d" in segments else "       ",
-            )
+        glyph = ASCII_GLYPHS[character]
+        if character == ":" and not show_colon:
+            glyph = BLANK_COLON_GLYPH
         for index, line in enumerate(glyph):
-            rows[index] += line + "  "
-    return [row.rstrip() for row in rows]
+            separator = "  " if rows[index] else ""
+            rows[index] += separator + line
+    return rows
 
 
 def render_watches(countdown: int, frame: int) -> Panel:
