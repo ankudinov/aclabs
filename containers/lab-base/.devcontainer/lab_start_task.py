@@ -162,15 +162,19 @@ def cvp_wait_animation(started_at: float) -> Panel:
     if remaining > 0:
         return render_watches(remaining, frame)
 
+    overdue = max(0, int(elapsed) - CVP_EXPECTED_WAIT_SECONDS)
+    overdue_minutes, overdue_seconds = divmod(overdue, 60)
+    overdue_clock = f"{overdue_minutes:02d}:{overdue_seconds:02d}"
+
     worried_poses = (
         (
             "    -- O --  ?!  .----------.\n"
-            "       |         |  00:00   |\n"
+            f"       |         |  {overdue_clock}   |\n"
             "      / >        '----------'"
         ),
         (
             "       O__  !!!  .----------.\n"
-            "      <|         |  00:00   |\n"
+            f"      <|         |  {overdue_clock}   |\n"
             "      / >        '----------'"
         ),
     )
