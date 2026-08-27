@@ -195,6 +195,7 @@ class CloudVisionOnboarder:
         )
 
         response_data = self._post_json(
+            # TODO: replace with /api/resources/admin.Enrollment/AddEnrollmentToken
             "/api/v3/services/admin.Enrollment/AddEnrollmentToken",
             {
                 "enrollmentToken": {
