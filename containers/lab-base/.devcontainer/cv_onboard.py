@@ -195,12 +195,11 @@ class CloudVisionOnboarder:
         )
 
         response_data = self._post_json(
-            # TODO: replace with /api/resources/admin.Enrollment/AddEnrollmentToken
-            "/api/v3/services/admin.Enrollment/AddEnrollmentToken",
+            "/api/resources/admin.Enrollment/AddEnrollmentToken",
             {
                 "enrollmentToken": {
                     "reenrollDevices": ["*"],
-                    "validFor": "24h",
+                    "validFor": "86400s",
                 }
             },
             "Failed to create a CloudVision device onboarding token.",
